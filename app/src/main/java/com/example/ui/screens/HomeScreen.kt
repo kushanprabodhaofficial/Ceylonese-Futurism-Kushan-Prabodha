@@ -24,14 +24,18 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.AutoStories
+import androidx.compose.material.icons.outlined.Category
+import androidx.compose.material.icons.outlined.Label
 import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -42,13 +46,20 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -58,6 +69,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.local.BlogPostEntity
+import com.example.data.model.SciFiSubGenre
+import com.example.ui.components.AdSenseBannerView
+import com.example.ui.components.AnimatedFlagStrip
 import com.example.ui.components.ContinueReadingBanner
 import com.example.ui.components.CosmicOrbitalBanner
 import com.example.ui.components.EmptyStateView
@@ -71,9 +85,11 @@ import com.example.ui.viewmodel.BlogUiState
 @Composable
 fun HomeScreen(
     uiState: BlogUiState,
+    onOpenDrawer: () -> Unit,
     onRefresh: () -> Unit,
     onDismissStatus: () -> Unit,
     onSearchQueryChange: (String) -> Unit,
+    onSelectSubGenre: (SciFiSubGenre?) -> Unit,
     onSelectCategory: (String?) -> Unit,
     onToggleTheme: () -> Unit,
     onPostClick: (BlogPostEntity) -> Unit,
@@ -91,8 +107,19 @@ fun HomeScreen(
         label = "rotation"
     )
 
+    // 0 = Sci-Fi Sub-Genres, 1 = Blog Labels
+    var filterModeTab by remember { mutableIntStateOf(0) }
+    LaunchedEffect(uiState.selectedCategory, uiState.selectedSubGenre) {
+        if (uiState.selectedCategory != null) {
+            filterModeTab = 1
+        } else if (uiState.selectedSubGenre != null) {
+            filterModeTab = 0
+        }
+    }
+
     val showFeaturedHero = uiState.searchQuery.isBlank() &&
         uiState.selectedCategory == null &&
+        uiState.selectedSubGenre == null &&
         uiState.filteredPosts.isNotEmpty()
     val featuredPost = if (showFeaturedHero) uiState.filteredPosts.first() else null
     val listPosts = if (featuredPost != null) {
@@ -100,6 +127,11 @@ fun HomeScreen(
     } else {
         uiState.filteredPosts
     }
+
+    val adClient = uiState.blogMeta?.adsensePublisherId?.takeIf { it.isNotBlank() }
+    val primaryAdSlot = uiState.blogMeta?.adsenseSlotIdsDelimited
+        ?.split("|||")
+        ?.firstOrNull { it.isNotBlank() }
 
     PullToRefreshBox(
         isRefreshing = uiState.isRefreshing,
@@ -118,6 +150,11 @@ fun HomeScreen(
                 contentPadding = PaddingValues(bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
+                // Slim Animated Top Strip with Sri Lankan Flag & Ceylonese Futurism
+                item(key = "animated_flag_strip") {
+                    AnimatedFlagStrip()
+                }
+
                 // Branded Ceylonese Futurism Header
                 item(key = "header") {
                     Box(
@@ -140,13 +177,28 @@ fun HomeScreen(
                         Column(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 14.dp)
+                                .padding(horizontal = 16.dp, vertical = 12.dp)
                         ) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                IconButton(
+                                    onClick = onOpenDrawer,
+                                    modifier = Modifier
+                                        .minimumInteractiveComponentSize()
+                                        .testTag("open_side_drawer_button")
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Menu,
+                                        contentDescription = "කතුවරයාගේ පැනලය විවෘත කරන්න",
+                                        tint = MaterialTheme.colorScheme.onBackground
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.width(4.dp))
+
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = "CEYLONESE FUTURISM",
@@ -296,39 +348,110 @@ fun HomeScreen(
                     }
                 }
 
-                // Quick Category Filter Chips
-                if (uiState.categories.isNotEmpty()) {
-                    item(key = "category_chips") {
-                        LazyRow(
-                            contentPadding = PaddingValues(horizontal = 16.dp),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                // Dual Filter Switcher: Sub-Genres + Blog Labels
+                if (uiState.subGenres.isNotEmpty() || uiState.categories.isNotEmpty()) {
+                    item(key = "filter_taxonomy_bar") {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            item {
-                                FilterChip(
-                                    selected = uiState.selectedCategory == null,
-                                    onClick = { onSelectCategory(null) },
-                                    label = { Text("සියල්ල (${uiState.allPosts.size})") },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
-                                    ),
-                                    modifier = Modifier.testTag("chip_all_posts")
-                                )
-                            }
-                            items(uiState.categories, key = { it.name }) { cat ->
-                                FilterChip(
-                                    selected = uiState.selectedCategory == cat.name,
-                                    onClick = {
-                                        onSelectCategory(
-                                            if (uiState.selectedCategory == cat.name) null else cat.name
+                            SingleChoiceSegmentedButtonRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 16.dp)
+                                    .testTag("home_taxonomy_toggle")
+                            ) {
+                                SegmentedButton(
+                                    selected = filterModeTab == 0,
+                                    onClick = { filterModeTab = 0 },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+                                    icon = {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Category,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
                                         )
-                                    },
-                                    label = { Text("${cat.name} (${cat.count})") },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                        selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                    }
+                                ) {
+                                    Text(
+                                        text = "උප ශානර (${uiState.subGenres.size})",
+                                        style = MaterialTheme.typography.labelMedium
                                     )
-                                )
+                                }
+                                SegmentedButton(
+                                    selected = filterModeTab == 1,
+                                    onClick = { filterModeTab = 1 },
+                                    shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+                                    icon = {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Label,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                ) {
+                                    Text(
+                                        text = "බ්ලොග් Labels (${uiState.categories.size})",
+                                        style = MaterialTheme.typography.labelMedium
+                                    )
+                                }
+                            }
+
+                            LazyRow(
+                                contentPadding = PaddingValues(horizontal = 16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                item {
+                                    FilterChip(
+                                        selected = uiState.selectedSubGenre == null && uiState.selectedCategory == null,
+                                        onClick = {
+                                            onSelectSubGenre(null)
+                                            onSelectCategory(null)
+                                        },
+                                        label = { Text("සියල්ල (${uiState.allPosts.size})") },
+                                        colors = FilterChipDefaults.filterChipColors(
+                                            selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                            selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                        ),
+                                        modifier = Modifier.testTag("chip_all_posts")
+                                    )
+                                }
+
+                                if (filterModeTab == 0) {
+                                    items(uiState.subGenres, key = { it.subGenre.name }) { summary ->
+                                        FilterChip(
+                                            selected = uiState.selectedSubGenre == summary.subGenre,
+                                            onClick = {
+                                                onSelectSubGenre(
+                                                    if (uiState.selectedSubGenre == summary.subGenre) null else summary.subGenre
+                                                )
+                                            },
+                                            label = { Text("${summary.subGenre.titleSinhala} (${summary.count})") },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                                selectedLabelColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                            ),
+                                            modifier = Modifier.testTag("chip_subgenre_${summary.subGenre.name}")
+                                        )
+                                    }
+                                } else {
+                                    items(uiState.categories, key = { it.name }) { cat ->
+                                        FilterChip(
+                                            selected = uiState.selectedCategory == cat.name,
+                                            onClick = {
+                                                onSelectCategory(
+                                                    if (uiState.selectedCategory == cat.name) null else cat.name
+                                                )
+                                            },
+                                            label = { Text("${cat.name} (${cat.count})") },
+                                            colors = FilterChipDefaults.filterChipColors(
+                                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer
+                                            ),
+                                            modifier = Modifier.testTag("chip_label_${cat.name}")
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -382,6 +505,7 @@ fun HomeScreen(
                             actionLabel = "සියලු ලිපි පෙන්වන්න",
                             onAction = {
                                 onSearchQueryChange("")
+                                onSelectSubGenre(null)
                                 onSelectCategory(null)
                             }
                         )
@@ -410,12 +534,15 @@ fun HomeScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Text(
-                                text = if (uiState.selectedCategory != null) {
-                                    "${uiState.selectedCategory} (${uiState.filteredPosts.size})"
-                                } else if (uiState.searchQuery.isNotBlank()) {
-                                    "සෙවුම් ප්‍රතිඵල (${uiState.filteredPosts.size})"
-                                } else {
-                                    "සියලුම විද්‍යා ප්‍රබන්ධ සහ ලිපි"
+                                text = when {
+                                    uiState.selectedSubGenre != null ->
+                                        "${uiState.selectedSubGenre.titleSinhala} (${uiState.filteredPosts.size})"
+                                    uiState.selectedCategory != null ->
+                                        "${uiState.selectedCategory} (${uiState.filteredPosts.size})"
+                                    uiState.searchQuery.isNotBlank() ->
+                                        "සෙවුම් ප්‍රතිඵල (${uiState.filteredPosts.size})"
+                                    else ->
+                                        "සියලුම විද්‍යා ප්‍රබන්ධ සහ ලිපි"
                                 },
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onBackground
@@ -428,14 +555,29 @@ fun HomeScreen(
                         }
                     }
 
-                    items(listPosts, key = { it.id }) { post ->
-                        StoryListCard(
-                            post = post,
-                            onClick = { onPostClick(post) },
-                            onBookmarkClick = { onToggleBookmark(post) },
-                            onLabelClick = { label -> onSelectCategory(label) },
-                            modifier = Modifier.padding(horizontal = 16.dp)
-                        )
+                    itemsIndexed(listPosts, key = { _, post -> post.id }) { index, post ->
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(14.dp)
+                        ) {
+                            StoryListCard(
+                                post = post,
+                                onClick = { onPostClick(post) },
+                                onBookmarkClick = { onToggleBookmark(post) },
+                                onLabelClick = { label -> onSelectCategory(label) },
+                                onSubGenreClick = { genre -> onSelectSubGenre(genre) },
+                                modifier = Modifier.padding(horizontal = 16.dp)
+                            )
+
+                            // Mid-Feed Google AdSense Slot after every 3rd story when AdSense is active
+                            if (index == 2 && adClient != null) {
+                                AdSenseBannerView(
+                                    adClient = adClient,
+                                    adSlot = primaryAdSlot,
+                                    modifier = Modifier.padding(horizontal = 16.dp)
+                                )
+                            }
+                        }
                     }
                 }
             }

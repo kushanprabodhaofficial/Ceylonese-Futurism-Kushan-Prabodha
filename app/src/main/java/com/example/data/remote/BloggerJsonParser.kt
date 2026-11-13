@@ -272,6 +272,25 @@ object BloggerJsonParser {
         return decodeHtmlEntities(match?.groupValues?.getOrNull(1).orEmpty()).trim()
     }
 
+    fun extractAdSensePublisherId(html: String): String {
+        val patterns = listOf(
+            Regex("""client=(ca-pub-\d+)""", RegexOption.IGNORE_CASE),
+            Regex("""data-ad-client=["'](ca-pub-\d+)["']""", RegexOption.IGNORE_CASE),
+            Regex("""google_ad_client\s*[:=]\s*["'](ca-pub-\d+)["']""", RegexOption.IGNORE_CASE),
+            Regex("""(ca-pub-\d{10,})""", RegexOption.IGNORE_CASE)
+        )
+        for (regex in patterns) {
+            val found = regex.find(html)?.groupValues?.getOrNull(1)
+            if (!found.isNullOrBlank()) return found
+        }
+        return ""
+    }
+
+    fun extractAdSenseSlotIds(html: String): List<String> {
+        val slotRegex = Regex("""data-ad-slot=["'](\d+)["']""", RegexOption.IGNORE_CASE)
+        return slotRegex.findAll(html).mapNotNull { it.groupValues.getOrNull(1) }.distinct().toList()
+    }
+
     fun extractFullPostBodyFromWebHtml(html: String): String? {
         val startMarkers = listOf(
             """class='post-body""",

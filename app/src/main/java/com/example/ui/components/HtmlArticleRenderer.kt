@@ -67,7 +67,9 @@ fun ArticleBlockView(
     fontSizeSp: Float,
     lineHeightMultiplier: Float,
     useSerifFont: Boolean,
-    onOpenUrl: (String) -> Unit
+    onOpenUrl: (String) -> Unit,
+    fallbackAdClient: String? = null,
+    fallbackAdSlot: String? = null
 ) {
     val context = LocalContext.current
     val bodyFontFamily: FontFamily = if (useSerifFont) NotoSerifSinhalaFamily else NotoSansSinhalaFamily
@@ -278,6 +280,17 @@ fun ArticleBlockView(
                     }
                 }
             }
+        }
+
+        is ArticleBlock.AdSenseBlock -> {
+            AdSenseBannerView(
+                adClient = block.adClient ?: fallbackAdClient,
+                adSlot = block.adSlot ?: fallbackAdSlot,
+                rawInsHtml = block.rawInsHtml,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 10.dp)
+            )
         }
 
         ArticleBlock.Divider -> {

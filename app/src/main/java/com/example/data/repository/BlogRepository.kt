@@ -5,6 +5,7 @@ import com.example.data.local.AppDatabase
 import com.example.data.local.BlogMetaEntity
 import com.example.data.local.BlogPageEntity
 import com.example.data.local.BlogPostEntity
+import com.example.data.local.StoryScoreEntity
 import com.example.data.model.BlogComment
 import com.example.data.model.ExternalBlogLink
 import com.example.data.model.RefreshResult
@@ -43,8 +44,10 @@ class BlogRepository(context: Context) {
     val readingHistoryFlow: Flow<List<BlogPostEntity>> = dao.observeReadingHistoryPosts()
     val allPagesFlow: Flow<List<BlogPageEntity>> = dao.observeAllPages()
     val blogMetaFlow: Flow<BlogMetaEntity?> = dao.observeBlogMeta()
+    val allStoryScoresFlow: Flow<List<StoryScoreEntity>> = dao.observeAllStoryScores()
 
     fun observePost(postId: String): Flow<BlogPostEntity?> = dao.observePostById(postId)
+    fun observeStoryScore(postId: String): Flow<StoryScoreEntity?> = dao.observeStoryScore(postId)
 
     suspend fun refreshBlog(forceNetwork: Boolean = true): RefreshResult = withContext(Dispatchers.IO) {
         val cacheHeader = if (forceNetwork) "no-cache, no-store, must-revalidate" else null
@@ -110,15 +113,19 @@ class BlogRepository(context: Context) {
 
             dao.replaceAllPages(pagesList)
 
-            // Fetch blog homepage HTML for extra navigation links and meta description
+            // Fetch blog homepage HTML for extra navigation links, meta description, and AdSense config
             var navLinks: List<ExternalBlogLink> = emptyList()
             var htmlMetaDescription = ""
+            var adsensePublisherId = ""
+            var adsenseSlotIds = emptyList<String>()
             runCatching {
                 val homeResp = api.fetchRawUrl(BloggerJsonParser.BLOG_BASE_URL, cacheControl = cacheHeader)
                 if (homeResp.isSuccessful) {
                     val html = homeResp.body()?.string().orEmpty()
                     navLinks = BloggerJsonParser.extractNavLinksFromBlogHtml(html)
                     htmlMetaDescription = BloggerJsonParser.extractMetaDescriptionFromHtml(html)
+                    adsensePublisherId = BloggerJsonParser.extractAdSensePublisherId(html)
+                    adsenseSlotIds = BloggerJsonParser.extractAdSenseSlotIds(html)
                 }
             }
 
@@ -135,7 +142,9 @@ class BlogRepository(context: Context) {
                     blogUrl = blogUrl,
                     navLinksDelimited = BloggerJsonParser.encodeNavLinks(navLinks),
                     lastSyncedMillis = System.currentTimeMillis(),
-                    totalPostsCount = distinctPosts.size
+                    totalPostsCount = distinctPosts.size,
+                    adsensePublisherId = adsensePublisherId,
+                    adsenseSlotIdsDelimited = adsenseSlotIds.joinToString("|||")
                 )
             )
 
@@ -218,5 +227,19 @@ class BlogRepository(context: Context) {
             isRead = markedRead,
             readAtMillis = System.currentTimeMillis()
         )
+    }
+
+    suspend fun saveStoryScoreLocal(score: StoryScoreEntity) = withContext(Dispatchers.IO) {
+        dao.upsertStoryScore(score)
+    }
+
+    suspend fun getAllStoryScoresOnce(): List<StoryScoreEntity> = withContext(Dispatchers.IO) {
+        dao.getAllStoryScoresOnce()
+    }
+
+    suspend fun markScoresSynced(postIds: List<String>) = withContext(Dispatchers.IO) {
+        if (postIds.isNotEmpty()) {
+            dao.markScoresSynced(postIds)
+        }
     }
 }

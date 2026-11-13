@@ -3,6 +3,7 @@ package com.example.ui.screens
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -27,6 +28,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.data.local.BlogPostEntity
+import com.example.data.model.SciFiSubGenre
+import com.example.data.model.SubGenreClassifier
 import com.example.ui.components.EmptyStateView
 import com.example.ui.components.StoryListCard
 
@@ -37,25 +40,43 @@ fun CategoryPostsScreen(
     allPosts: List<BlogPostEntity>,
     onBack: () -> Unit,
     onPostClick: (BlogPostEntity) -> Unit,
-    onToggleBookmark: (BlogPostEntity) -> Unit
+    onToggleBookmark: (BlogPostEntity) -> Unit,
+    subGenre: SciFiSubGenre? = null
 ) {
     BackHandler(onBack = onBack)
 
-    val matchingPosts = remember(categoryName, allPosts) {
-        allPosts.filter { post ->
-            post.labelsList().any { it.equals(categoryName, ignoreCase = true) }
+    val matchingPosts = remember(categoryName, subGenre, allPosts) {
+        if (subGenre != null) {
+            allPosts.filter { post -> SubGenreClassifier.classifyPost(post).contains(subGenre) }
+        } else {
+            allPosts.filter { post ->
+                post.labelsList().any { it.equals(categoryName, ignoreCase = true) }
+            }
         }
     }
+
+    val headerTitle = subGenre?.titleSinhala ?: categoryName
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        text = "$categoryName (${matchingPosts.size})",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    Column {
+                        Text(
+                            text = "$headerTitle (${matchingPosts.size})",
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        if (subGenre != null) {
+                            Text(
+                                text = subGenre.descriptionSinhala,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {

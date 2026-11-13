@@ -109,4 +109,19 @@ interface BlogDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertBlogMeta(meta: BlogMetaEntity)
+
+    @Query("SELECT * FROM story_scores ORDER BY earnedAtMillis DESC")
+    fun observeAllStoryScores(): Flow<List<StoryScoreEntity>>
+
+    @Query("SELECT * FROM story_scores")
+    suspend fun getAllStoryScoresOnce(): List<StoryScoreEntity>
+
+    @Query("SELECT * FROM story_scores WHERE postId = :postId LIMIT 1")
+    fun observeStoryScore(postId: String): Flow<StoryScoreEntity?>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsertStoryScore(score: StoryScoreEntity)
+
+    @Query("UPDATE story_scores SET syncedToCloud = 1 WHERE postId IN (:postIds)")
+    suspend fun markScoresSynced(postIds: List<String>)
 }

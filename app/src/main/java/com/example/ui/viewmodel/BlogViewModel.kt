@@ -4,7 +4,7 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.StoryAmbientAudioEngine
-import com.example.audio.StorySoundscape
+import com.example.audio.StoryTrack
 import com.example.data.local.BlogMetaEntity
 import com.example.data.local.BlogPageEntity
 import com.example.data.local.BlogPostEntity
@@ -12,6 +12,9 @@ import com.example.data.model.ArchiveGroup
 import com.example.data.model.BlogComment
 import com.example.data.model.CategoryInfo
 import com.example.data.model.ReaderSurfaceMode
+import com.example.data.model.SciFiSubGenre
+import com.example.data.model.SubGenreClassifier
+import com.example.data.model.SubGenreSummary
 import com.example.data.preferences.ReaderPreferences
 import com.example.data.preferences.ReaderPreferencesRepository
 import com.example.data.remote.BloggerJsonParser
@@ -34,9 +37,11 @@ data class BlogUiState(
     val continueReadingPost: BlogPostEntity? = null,
     val pages: List<BlogPageEntity> = emptyList(),
     val blogMeta: BlogMetaEntity? = null,
+    val subGenres: List<SubGenreSummary> = emptyList(),
     val categories: List<CategoryInfo> = emptyList(),
     val archives: List<ArchiveGroup> = emptyList(),
     val recentComments: List<BlogComment> = emptyList(),
+    val selectedSubGenre: SciFiSubGenre? = null,
     val selectedCategory: String? = null,
     val searchQuery: String = "",
     val isRefreshing: Boolean = false,
@@ -54,6 +59,7 @@ class BlogViewModel(application: Application) : AndroidViewModel(application) {
 
     private val searchQueryFlow = MutableStateFlow("")
     private val selectedCategoryFlow = MutableStateFlow<String?>(null)
+    private val selectedSubGenreFlow = MutableStateFlow<SciFiSubGenre?>(null)
     private val isRefreshingFlow = MutableStateFlow(false)
     private val hasAttemptedInitialSync = MutableStateFlow(false)
     private val statusMessageFlow = MutableStateFlow<Pair<String?, Boolean>>(null to false)
@@ -76,6 +82,7 @@ class BlogViewModel(application: Application) : AndroidViewModel(application) {
     private data class FilterStateBundle(
         val query: String,
         val category: String?,
+        val subGenre: SciFiSubGenre?,
         val isRefreshing: Boolean,
         val hasAttemptedSync: Boolean,
         val status: Pair<String?, Boolean>
@@ -91,14 +98,26 @@ class BlogViewModel(application: Application) : AndroidViewModel(application) {
         CoreDataBundle(posts, bookmarks, history, pages, meta)
     }
 
+    private val selectionFlow = combine(
+        selectedCategoryFlow,
+        selectedSubGenreFlow
+    ) { category, subGenre -> category to subGenre }
+
     private val filterStateFlow = combine(
         searchQueryFlow,
-        selectedCategoryFlow,
+        selectionFlow,
         isRefreshingFlow,
         hasAttemptedInitialSync,
         statusMessageFlow
-    ) { query, category, refreshing, attempted, status ->
-        FilterStateBundle(query, category, refreshing, attempted, status)
+    ) { query, selection, refreshing, attempted, status ->
+        FilterStateBundle(
+            query = query,
+            category = selection.first,
+            subGenre = selection.second,
+            isRefreshing = refreshing,
+            hasAttemptedSync = attempted,
+            status = status
+        )
     }
 
     val uiState: StateFlow<BlogUiState> = combine(
@@ -108,7 +127,8 @@ class BlogViewModel(application: Application) : AndroidViewModel(application) {
         recentCommentsFlow
     ) { core, filter, prefs, comments ->
         val posts = core.posts
-        val filtered = filterPosts(posts, filter.query, filter.category)
+        val filtered = filterPosts(posts, filter.query, filter.category, filter.subGenre)
+        val subGenres = SubGenreClassifier.computeSummaries(posts)
         val categories = computeCategories(posts)
         val archives = computeArchives(posts)
         val continueReading = core.history.firstOrNull { !it.isRead && it.lastScrollProgress > 0.03f }
@@ -122,9 +142,11 @@ class BlogViewModel(application: Application) : AndroidViewModel(application) {
             continueReadingPost = continueReading,
             pages = core.pages,
             blogMeta = core.meta,
+            subGenres = subGenres,
             categories = categories,
             archives = archives,
             recentComments = comments,
+            selectedSubGenre = filter.subGenre,
             selectedCategory = filter.category,
             searchQuery = filter.query,
             isRefreshing = filter.isRefreshing,
@@ -183,6 +205,16 @@ class BlogViewModel(application: Application) : AndroidViewModel(application) {
 
     fun setSelectedCategory(category: String?) {
         selectedCategoryFlow.value = category
+        if (category != null) {
+            selectedSubGenreFlow.value = null
+        }
+    }
+
+    fun setSelectedSubGenre(subGenre: SciFiSubGenre?) {
+        selectedSubGenreFlow.value = subGenre
+        if (subGenre != null) {
+            selectedCategoryFlow.value = null
+        }
     }
 
     fun observePost(postId: String): Flow<BlogPostEntity?> = repository.observePost(postId)
@@ -247,8 +279,12 @@ class BlogViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { prefsRepository.setAmbientMusicVolume(volume) }
     }
 
-    fun startStoryAmbientMusic(soundscape: StorySoundscape, volume: Float) {
-        audioEngine.start(soundscape, volume)
+    fun setStoryTrackSlot(postId: String, slotIndex: Int) {
+        viewModelScope.launch { prefsRepository.setStoryTrackSlot(postId, slotIndex) }
+    }
+
+    fun startStoryMusic(track: StoryTrack, volume: Float) {
+        audioEngine.start(track, volume)
     }
 
     fun stopStoryAmbientMusic() {
@@ -263,18 +299,20 @@ class BlogViewModel(application: Application) : AndroidViewModel(application) {
     private fun filterPosts(
         posts: List<BlogPostEntity>,
         query: String,
-        category: String?
+        category: String?,
+        subGenre: SciFiSubGenre?
     ): List<BlogPostEntity> {
         val q = query.trim().lowercase()
         return posts.filter { post ->
             val matchesCategory = category == null || post.labelsList().any {
                 it.equals(category, ignoreCase = true)
             }
+            val matchesSubGenre = subGenre == null || SubGenreClassifier.classifyPost(post).contains(subGenre)
             val matchesQuery = q.isEmpty() ||
                 post.title.lowercase().contains(q) ||
                 post.excerpt.lowercase().contains(q) ||
                 post.labelsDelimited.lowercase().contains(q)
-            matchesCategory && matchesQuery
+            matchesCategory && matchesSubGenre && matchesQuery
         }
     }
 

@@ -9,6 +9,7 @@ sealed class ArticleBlock {
     data class BulletItem(val bulletLabel: String, val segments: List<InlineSegment>) : ArticleBlock()
     data class ImageBlock(val imageUrl: String, val caption: String?) : ArticleBlock()
     data class VideoEmbedBlock(val title: String, val watchUrl: String, val thumbnailUrl: String?) : ArticleBlock()
+    data class AdSenseBlock(val adClient: String?, val adSlot: String?, val rawInsHtml: String) : ArticleBlock()
     data object Divider : ArticleBlock()
 }
 
@@ -28,20 +29,20 @@ object HtmlArticleParser {
             .replace(Regex("<script[^>]*>.*?</script>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
             .replace(Regex("<style[^>]*>.*?</style>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)), "")
             .replace(Regex("<!--.*?-->", RegexOption.DOT_MATCHES_ALL), "")
+            .replace(Regex("""\(adsbygoogle\s*=\s*window\.adsbygoogle\s*\|\|\s*\[\]\)\.push\(\{\}\)\s*;?""", RegexOption.IGNORE_CASE), "")
             .replace("<br\\s*/?>".toRegex(RegexOption.IGNORE_CASE), "\n")
             .replace("</div>".toRegex(RegexOption.IGNORE_CASE), "\n")
             .replace("<div[^>]*>".toRegex(RegexOption.IGNORE_CASE), "\n")
 
         val blocks = mutableListOf<ArticleBlock>()
 
-        // Tokenize major block tags while keeping inline text & media in order
+        // Tokenize major block tags + inline AdSense units while keeping media in order
         val blockTokenRegex = Regex(
-            """(<h[1-6]\b[^>]*>.*?</h[1-6]>|<blockquote\b[^>]*>.*?</blockquote>|<li\b[^>]*>.*?</li>|<p\b[^>]*>.*?</p>|<hr\b[^>]*/?>|<iframe\b[^>]*>.*?</iframe>|<iframe\b[^>]*/?>|<img\b[^>]*>)""",
+            """(<ins\b[^>]*adsbygoogle[^>]*>.*?</ins>|<h[1-6]\b[^>]*>.*?</h[1-6]>|<blockquote\b[^>]*>.*?</blockquote>|<li\b[^>]*>.*?</li>|<p\b[^>]*>.*?</p>|<hr\b[^>]*/?>|<iframe\b[^>]*>.*?</iframe>|<iframe\b[^>]*/?>|<img\b[^>]*>)""",
             setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL)
         )
 
         var lastIndex = 0
-        var bulletIndex = 0
 
         for (match in blockTokenRegex.findAll(cleaned)) {
             if (match.range.first > lastIndex) {
@@ -53,9 +54,11 @@ object HtmlArticleParser {
             val lower = token.lowercase()
 
             when {
+                lower.startsWith("<ins") -> {
+                    parseAdSenseIns(token)?.let { blocks.add(it) }
+                }
                 lower.startsWith("<hr") -> {
                     blocks.add(ArticleBlock.Divider)
-                    bulletIndex = 0
                 }
                 lower.startsWith("<h") -> {
                     val level = token.getOrNull(2)?.digitToIntOrNull() ?: 2
@@ -63,17 +66,14 @@ object HtmlArticleParser {
                     if (headingText.isNotBlank()) {
                         blocks.add(ArticleBlock.Heading(headingText, level))
                     }
-                    bulletIndex = 0
                 }
                 lower.startsWith("<blockquote") -> {
                     val quoteText = BloggerJsonParser.stripHtmlToPlainText(token)
                     if (quoteText.isNotBlank()) {
                         blocks.add(ArticleBlock.Quote(quoteText))
                     }
-                    bulletIndex = 0
                 }
                 lower.startsWith("<li") -> {
-                    bulletIndex++
                     val segments = parseInlineSegments(token)
                     if (segments.isNotEmpty()) {
                         blocks.add(ArticleBlock.BulletItem("•", segments))
@@ -81,14 +81,11 @@ object HtmlArticleParser {
                 }
                 lower.startsWith("<iframe") -> {
                     parseVideoIframe(token)?.let { blocks.add(it) }
-                    bulletIndex = 0
                 }
                 lower.startsWith("<img") -> {
                     extractImageBlock(token)?.let { blocks.add(it) }
                 }
                 lower.startsWith("<p") -> {
-                    bulletIndex = 0
-                    // A <p> in Blogger frequently wraps an <img> or <iframe> plus text
                     extractNestedMediaAndParagraph(token, blocks)
                 }
             }
@@ -103,6 +100,18 @@ object HtmlArticleParser {
         return blocks
     }
 
+    private fun parseAdSenseIns(insHtml: String): ArticleBlock.AdSenseBlock? {
+        val client = Regex("""data-ad-client=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            .find(insHtml)?.groupValues?.getOrNull(1)
+        val slot = Regex("""data-ad-slot=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            .find(insHtml)?.groupValues?.getOrNull(1)
+        return ArticleBlock.AdSenseBlock(
+            adClient = client,
+            adSlot = slot,
+            rawInsHtml = insHtml
+        )
+    }
+
     private fun appendLooseTextAndImages(fragment: String, out: MutableList<ArticleBlock>) {
         if (fragment.isBlank()) return
         val lines = fragment.split(Regex("\n{2,}"))
@@ -113,11 +122,17 @@ object HtmlArticleParser {
     }
 
     private fun extractNestedMediaAndParagraph(fragment: String, out: MutableList<ArticleBlock>) {
+        val insRegex = Regex("""<ins\b[^>]*adsbygoogle[^>]*>.*?</ins>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
         val imgRegex = Regex("""<img\b[^>]*>""", RegexOption.IGNORE_CASE)
         val iframeRegex = Regex("""<iframe\b[^>]*>.*?</iframe>|<iframe\b[^>]*/?>""", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
 
         var working = fragment
-        for (iframeMatch in iframeRegex.findAll(fragment)) {
+        for (insMatch in insRegex.findAll(fragment)) {
+            parseAdSenseIns(insMatch.value)?.let { out.add(it) }
+            working = working.replace(insMatch.value, "")
+        }
+
+        for (iframeMatch in iframeRegex.findAll(working)) {
             parseVideoIframe(iframeMatch.value)?.let { out.add(it) }
             working = working.replace(iframeMatch.value, "")
         }
@@ -133,7 +148,6 @@ object HtmlArticleParser {
             }
         }
 
-        // Split remaining text by explicit line breaks that look like paragraphs
         val textParts = working.split(Regex("""\n+"""))
         for (part in textParts) {
             val segments = parseInlineSegments(part)
@@ -231,7 +245,6 @@ object HtmlArticleParser {
             if (tail.isNotEmpty()) segments.add(InlineSegment(text = tail))
         }
 
-        // Collapse redundant whitespace safely
         return segments.mapNotNull { seg ->
             val cleanedText = seg.text.replace(Regex("[ \\t\\r\\n]+"), " ")
             if (cleanedText.isEmpty()) null else seg.copy(text = cleanedText)

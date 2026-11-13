@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -89,16 +90,25 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import com.example.audio.StoryMoodAnalyzer
-import com.example.audio.StorySoundscape
+import com.example.audio.StoryMusicPair
+import com.example.audio.StoryTrack
+import com.example.data.local.BlogMetaEntity
 import com.example.data.local.BlogPostEntity
 import com.example.data.model.BlogComment
 import com.example.data.model.ReaderSurfaceMode
+import com.example.data.model.SciFiSubGenre
+import com.example.data.model.SubGenreClassifier
 import com.example.data.preferences.ReaderPreferences
+import com.example.data.remote.ArticleBlock
 import com.example.data.remote.BloggerJsonParser
 import com.example.data.remote.HtmlArticleParser
+import com.example.ui.components.AdSenseBannerView
 import com.example.ui.components.ArticleBlockView
+import com.example.ui.components.StoryQuizAndImageSection
 import com.example.ui.theme.CosmicBackground
 import com.example.ui.theme.CosmicCyan
 import com.example.ui.theme.CosmicSurface
@@ -121,6 +131,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 @Composable
 fun ArticleDetailScreen(
     post: BlogPostEntity?,
+    blogMeta: BlogMetaEntity?,
     allPosts: List<BlogPostEntity>,
     comments: List<BlogComment>,
     isLoadingComments: Boolean,
@@ -131,6 +142,7 @@ fun ArticleDetailScreen(
     onToggleBookmark: (BlogPostEntity) -> Unit,
     onUpdateProgress: (String, Float) -> Unit,
     onSelectPost: (BlogPostEntity) -> Unit,
+    onSubGenreClick: (SciFiSubGenre) -> Unit,
     onCategoryClick: (String) -> Unit,
     onOpenWebUrl: (String, String) -> Unit,
     onFontSizeChange: (Float) -> Unit,
@@ -139,8 +151,10 @@ fun ArticleDetailScreen(
     onReaderSurfaceChange: (ReaderSurfaceMode) -> Unit,
     onAmbientMusicEnabledChange: (Boolean) -> Unit,
     onAmbientMusicVolumeChange: (Float) -> Unit,
-    onStartAmbientMusic: (StorySoundscape, Float) -> Unit,
-    onStopAmbientMusic: () -> Unit
+    onSelectTrackSlot: (String, Int) -> Unit,
+    onStartStoryMusic: (StoryTrack, Float) -> Unit,
+    onStopStoryMusic: () -> Unit,
+    onNavigateToScoreboard: () -> Unit
 ) {
     BackHandler(onBack = onBack)
 
@@ -173,20 +187,27 @@ fun ArticleDetailScreen(
         return
     }
 
-    val matchedSoundscape = remember(post.id, post.title, post.contentHtml, post.labelsDelimited) {
-        StoryMoodAnalyzer.analyzePost(post)
+    val musicPair = remember(
+        post.id,
+        post.numericPostId,
+        post.title,
+        post.contentHtml,
+        post.labelsDelimited,
+        post.publishedIso
+    ) {
+        StoryMoodAnalyzer.createMusicPairForPost(post)
     }
-    var overrideSoundscape by remember(post.id) { mutableStateOf<StorySoundscape?>(null) }
-    val activeSoundscape = overrideSoundscape ?: matchedSoundscape
+    val selectedSlot = preferences.selectedTrackSlotFor(post.id)
+    val activeTrack = musicPair.trackAt(selectedSlot)
 
-    // Lifecycle-aware ambient music playback
-    DisposableEffect(lifecycleOwner) {
+    // Lifecycle-aware story-unique music playback
+    DisposableEffect(lifecycleOwner, activeTrack.trackId) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_PAUSE -> onStopAmbientMusic()
+                Lifecycle.Event.ON_PAUSE -> onStopStoryMusic()
                 Lifecycle.Event.ON_RESUME -> {
                     if (preferences.ambientMusicEnabled) {
-                        onStartAmbientMusic(activeSoundscape, preferences.ambientMusicVolume)
+                        onStartStoryMusic(activeTrack, preferences.ambientMusicVolume)
                     }
                 }
                 else -> Unit
@@ -195,15 +216,15 @@ fun ArticleDetailScreen(
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose {
             lifecycleOwner.lifecycle.removeObserver(observer)
-            onStopAmbientMusic()
+            onStopStoryMusic()
         }
     }
 
-    LaunchedEffect(post.id, activeSoundscape, preferences.ambientMusicEnabled) {
+    LaunchedEffect(post.id, activeTrack.trackId, preferences.ambientMusicEnabled) {
         if (preferences.ambientMusicEnabled) {
-            onStartAmbientMusic(activeSoundscape, preferences.ambientMusicVolume)
+            onStartStoryMusic(activeTrack, preferences.ambientMusicVolume)
         } else {
-            onStopAmbientMusic()
+            onStopStoryMusic()
         }
     }
 
@@ -212,8 +233,33 @@ fun ArticleDetailScreen(
         onLoadComments(post.numericPostId, post.title)
     }
 
+    val quizViewModel: com.example.ui.viewmodel.StoryQuizViewModel = viewModel(
+        key = "quiz_${post.id}",
+        factory = com.example.ui.viewmodel.StoryQuizViewModel.provideFactory(post.id)
+    )
+    val quizState by quizViewModel.quizState.collectAsStateWithLifecycle()
+    val sceneImageState by quizViewModel.imageState.collectAsStateWithLifecycle()
+    val editableScenePrompt by quizViewModel.editableScenePrompt.collectAsStateWithLifecycle()
+    val isSavingImage by quizViewModel.isSavingImage.collectAsStateWithLifecycle()
+    val downloadMessage by quizViewModel.downloadMessage.collectAsStateWithLifecycle()
+    val savedScore by quizViewModel.savedStoryScore.collectAsStateWithLifecycle(initialValue = null)
+
     val blocks = remember(post.id, post.contentHtml) {
         HtmlArticleParser.parse(post.contentHtml)
+    }
+    val postSubGenres = remember(post.id, post.title, post.labelsDelimited, post.contentHtml) {
+        SubGenreClassifier.classifyPost(post)
+    }
+    val adClient = blogMeta?.adsensePublisherId?.takeIf { it.isNotBlank() }
+    val primaryAdSlot = blogMeta?.adsenseSlotIdsDelimited
+        ?.split("|||")
+        ?.firstOrNull { it.isNotBlank() }
+    val midArticleAdIndex = remember(blocks, adClient) {
+        if (adClient != null && blocks.none { it is ArticleBlock.AdSenseBlock } && blocks.size >= 4) {
+            blocks.size / 2
+        } else {
+            -1
+        }
     }
 
     val currentIndex = remember(post.id, allPosts) {
@@ -412,12 +458,26 @@ fun ArticleDetailScreen(
                 item(key = "article_header") {
                     Column(modifier = Modifier.fillMaxWidth()) {
                         val labels = post.labelsList()
-                        if (labels.isNotEmpty()) {
+                        if (postSubGenres.isNotEmpty() || labels.isNotEmpty()) {
                             FlowRow(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier.padding(bottom = 12.dp)
                             ) {
+                                postSubGenres.forEach { subGenre ->
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f),
+                                        modifier = Modifier.clickable { onSubGenreClick(subGenre) }
+                                    ) {
+                                        Text(
+                                            text = subGenre.titleSinhala,
+                                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                        )
+                                    }
+                                }
                                 labels.forEach { label ->
                                     Surface(
                                         shape = RoundedCornerShape(8.dp),
@@ -476,14 +536,22 @@ fun ArticleDetailScreen(
 
                         Spacer(modifier = Modifier.height(14.dp))
 
-                        // Story-Matched Ambient Background Music Control Card
+                        // Unique 2-Track Music Pair for this Story
                         StoryAmbientMusicBar(
-                            soundscape = activeSoundscape,
+                            musicPair = musicPair,
+                            selectedSlot = selectedSlot,
+                            activeTrack = activeTrack,
                             isPlaying = preferences.ambientMusicEnabled,
                             accentColor = accentColor,
                             surfaceColor = highlightSurface,
                             textColor = textColor,
                             secondaryTextColor = secondaryColor,
+                            onSelectSlot = { slotIdx ->
+                                onSelectTrackSlot(post.id, slotIdx)
+                                if (!preferences.ambientMusicEnabled) {
+                                    onAmbientMusicEnabledChange(true)
+                                }
+                            },
                             onToggle = { onAmbientMusicEnabledChange(!preferences.ambientMusicEnabled) },
                             onOpenOptions = { showReaderSettings = true }
                         )
@@ -495,11 +563,11 @@ fun ArticleDetailScreen(
                     }
                 }
 
-                // Rich HTML Content Blocks
-                items(
-                    items = blocks.withIndex().toList(),
-                    key = { "block_${it.index}" }
-                ) { (_, block) ->
+                // Rich HTML Content Blocks + Mid-Article AdSense Slot
+                itemsIndexed(
+                    items = blocks,
+                    key = { index, _ -> "block_$index" }
+                ) { index, block ->
                     ArticleBlockView(
                         block = block,
                         textColor = textColor,
@@ -509,7 +577,45 @@ fun ArticleDetailScreen(
                         fontSizeSp = preferences.fontSizeSp,
                         lineHeightMultiplier = preferences.lineHeightMultiplier,
                         useSerifFont = preferences.useSerifFont,
-                        onOpenUrl = { url -> onOpenWebUrl(url, post.title) }
+                        onOpenUrl = { url -> onOpenWebUrl(url, post.title) },
+                        fallbackAdClient = adClient,
+                        fallbackAdSlot = primaryAdSlot
+                    )
+
+                    if (index == midArticleAdIndex && adClient != null) {
+                        AdSenseBannerView(
+                            adClient = adClient,
+                            adSlot = primaryAdSlot,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 14.dp)
+                        )
+                    }
+                }
+
+                // End-of-Story AI Quiz, Scoring & Story-Event Image Studio
+                item(key = "story_quiz_and_image") {
+                    Spacer(modifier = Modifier.height(22.dp))
+                    StoryQuizAndImageSection(
+                        post = post,
+                        savedScore = savedScore,
+                        quizState = quizState,
+                        imageState = sceneImageState,
+                        editableScenePrompt = editableScenePrompt,
+                        isSavingImage = isSavingImage,
+                        downloadMessage = downloadMessage,
+                        accentColor = accentColor,
+                        surfaceColor = highlightSurface,
+                        textColor = textColor,
+                        secondaryColor = secondaryColor,
+                        onStartQuiz = { quizViewModel.startQuiz(post) },
+                        onSelectAnswer = { qIdx, optIdx -> quizViewModel.selectAnswer(qIdx, optIdx) },
+                        onSubmitQuiz = { quizViewModel.submitQuiz(post) },
+                        onScenePromptChange = { quizViewModel.updateScenePrompt(it) },
+                        onGenerateImage = { quizViewModel.generateStorySceneImage(post.title) },
+                        onEditImage = { instruction -> quizViewModel.editCurrentSceneImage(instruction) },
+                        onDownloadImage = { quizViewModel.downloadGeneratedImage(context, post.title) },
+                        onNavigateToScoreboard = onNavigateToScoreboard
                     )
                 }
 
@@ -703,19 +809,22 @@ fun ArticleDetailScreen(
         ModalBottomSheet(onDismissRequest = { showReaderSettings = false }) {
             ReaderSettingsSheetContent(
                 preferences = preferences,
-                activeSoundscape = activeSoundscape,
+                musicPair = musicPair,
+                selectedSlot = selectedSlot,
+                activeTrack = activeTrack,
                 onFontSizeChange = onFontSizeChange,
                 onLineHeightChange = onLineHeightChange,
                 onUseSerifChange = onUseSerifChange,
                 onReaderSurfaceChange = onReaderSurfaceChange,
                 onAmbientMusicEnabledChange = onAmbientMusicEnabledChange,
                 onAmbientMusicVolumeChange = onAmbientMusicVolumeChange,
-                onSelectSoundscape = { chosen ->
-                    overrideSoundscape = chosen
+                onSelectTrackSlot = { slotIdx ->
+                    onSelectTrackSlot(post.id, slotIdx)
+                    val chosen = musicPair.trackAt(slotIdx)
                     if (!preferences.ambientMusicEnabled) {
                         onAmbientMusicEnabledChange(true)
                     } else {
-                        onStartAmbientMusic(chosen, preferences.ambientMusicVolume)
+                        onStartStoryMusic(chosen, preferences.ambientMusicVolume)
                     }
                 }
             )
@@ -725,12 +834,15 @@ fun ArticleDetailScreen(
 
 @Composable
 private fun StoryAmbientMusicBar(
-    soundscape: StorySoundscape,
+    musicPair: StoryMusicPair,
+    selectedSlot: Int,
+    activeTrack: StoryTrack,
     isPlaying: Boolean,
     accentColor: Color,
     surfaceColor: Color,
     textColor: Color,
     secondaryTextColor: Color,
+    onSelectSlot: (Int) -> Unit,
     onToggle: () -> Unit,
     onOpenOptions: () -> Unit
 ) {
@@ -742,69 +854,98 @@ private fun StoryAmbientMusicBar(
             .clip(MaterialTheme.shapes.medium)
             .clickable(onClick = onOpenOptions)
     ) {
-        Row(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween
+            verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             Row(
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.weight(1f)
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Surface(
-                    shape = CircleShape,
-                    color = if (isPlaying) accentColor.copy(alpha = 0.18f) else secondaryTextColor.copy(alpha = 0.12f),
-                    modifier = Modifier.size(38.dp)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        if (isPlaying) {
-                            AnimatedEqualizerBars(color = accentColor)
-                        } else {
-                            Icon(
-                                imageVector = Icons.Filled.MusicOff,
-                                contentDescription = null,
-                                tint = secondaryTextColor,
-                                modifier = Modifier.size(18.dp)
-                            )
+                    Surface(
+                        shape = CircleShape,
+                        color = if (isPlaying) accentColor.copy(alpha = 0.18f) else secondaryTextColor.copy(alpha = 0.12f),
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            if (isPlaying) {
+                                AnimatedEqualizerBars(color = accentColor)
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Filled.MusicOff,
+                                    contentDescription = null,
+                                    tint = secondaryTextColor,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
                         }
                     }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = if (isPlaying) {
+                                activeTrack.titleSinhala
+                            } else {
+                                "මෙම කතාවේ සංගීතය නිහඬයි"
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                            color = textColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = if (isPlaying) {
+                                "${activeTrack.subtitleSinhala} • අනන්‍ය යුගලය"
+                            } else {
+                                "කතාවට අනන්‍ය සංගීත 2න් එකක් තෝරා ON කරන්න"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = secondaryTextColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
                 }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = if (isPlaying) {
-                            "පසුබිම් සංගීතය • ${soundscape.displayNameSinhala}"
-                        } else {
-                            "පසුබිම් සංගීතය නිහඬයි"
-                        },
-                        style = MaterialTheme.typography.labelLarge,
-                        color = textColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = if (isPlaying) {
-                            "${soundscape.subtitleSinhala} • සැකසීමට තට්ටු කරන්න"
-                        } else {
-                            "${soundscape.displayNameSinhala} සක්‍රිය කිරීමට ON කරන්න"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = secondaryTextColor,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Switch(
+                    checked = isPlaying,
+                    onCheckedChange = { onToggle() },
+                    modifier = Modifier.testTag("music_card_switch")
+                )
             }
 
-            Spacer(modifier = Modifier.width(10.dp))
-
-            Switch(
-                checked = isPlaying,
-                onCheckedChange = { onToggle() },
-                modifier = Modifier.testTag("music_card_switch")
-            )
+            SingleChoiceSegmentedButtonRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("story_music_pair_selector")
+            ) {
+                musicPair.tracks.forEachIndexed { idx, track ->
+                    SegmentedButton(
+                        selected = selectedSlot == idx,
+                        onClick = { onSelectSlot(idx) },
+                        shape = SegmentedButtonDefaults.itemShape(
+                            index = idx,
+                            count = musicPair.tracks.size
+                        )
+                    ) {
+                        Text(
+                            text = track.shortButtonLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -872,14 +1013,16 @@ private fun AnimatedEqualizerBars(color: Color) {
 @Composable
 fun ReaderSettingsSheetContent(
     preferences: ReaderPreferences,
-    activeSoundscape: StorySoundscape,
+    musicPair: StoryMusicPair,
+    selectedSlot: Int,
+    activeTrack: StoryTrack,
     onFontSizeChange: (Float) -> Unit,
     onLineHeightChange: (Float) -> Unit,
     onUseSerifChange: (Boolean) -> Unit,
     onReaderSurfaceChange: (ReaderSurfaceMode) -> Unit,
     onAmbientMusicEnabledChange: (Boolean) -> Unit,
     onAmbientMusicVolumeChange: (Float) -> Unit,
-    onSelectSoundscape: (StorySoundscape) -> Unit
+    onSelectTrackSlot: (Int) -> Unit
 ) {
     Column(
         modifier = Modifier
@@ -895,7 +1038,7 @@ fun ReaderSettingsSheetContent(
             color = MaterialTheme.colorScheme.onSurface
         )
 
-        // Ambient Background Music Controls
+        // Unique Story Music Pair Controls
         Surface(
             shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.surfaceContainerHigh
@@ -911,7 +1054,10 @@ fun ReaderSettingsSheetContent(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
                         Icon(
                             imageVector = Icons.Outlined.GraphicEq,
                             contentDescription = null,
@@ -920,13 +1066,15 @@ fun ReaderSettingsSheetContent(
                         Spacer(modifier = Modifier.width(8.dp))
                         Column {
                             Text(
-                                text = "පසුබිම් සංගීතය (Story Audio)",
+                                text = "මෙම කතාවට අනන්‍ය සංගීත යුගලය",
                                 style = MaterialTheme.typography.labelLarge
                             )
                             Text(
-                                text = activeSoundscape.displayNameSinhala,
+                                text = activeTrack.titleSinhala,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.primary
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
                         }
                     }
@@ -938,6 +1086,66 @@ fun ReaderSettingsSheetContent(
                 }
 
                 if (preferences.ambientMusicEnabled) {
+                    Text(
+                        text = "මෙම කතාව සඳහා වෙන් වූ සංගීත 2න් එකක් තෝරන්න",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        musicPair.tracks.forEachIndexed { idx, track ->
+                            val isSelected = selectedSlot == idx
+                            Surface(
+                                shape = MaterialTheme.shapes.small,
+                                color = if (isSelected) {
+                                    MaterialTheme.colorScheme.primaryContainer
+                                } else {
+                                    MaterialTheme.colorScheme.surfaceContainer
+                                },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(MaterialTheme.shapes.small)
+                                    .clickable { onSelectTrackSlot(idx) }
+                                    .testTag("sheet_story_track_$idx")
+                            ) {
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 10.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = track.titleSinhala,
+                                            style = MaterialTheme.typography.labelLarge,
+                                            color = if (isSelected) {
+                                                MaterialTheme.colorScheme.onPrimaryContainer
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurface
+                                            }
+                                        )
+                                        Text(
+                                            text = track.subtitleSinhala,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = if (isSelected) {
+                                                MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            }
+                                        )
+                                    }
+                                    if (isSelected) {
+                                        Text(
+                                            text = "වාදනය වේ",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     Column {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -958,21 +1166,6 @@ fun ReaderSettingsSheetContent(
                             onValueChange = onAmbientMusicVolumeChange,
                             valueRange = 0.05f..1.0f
                         )
-                    }
-
-                    Text(
-                        text = "සංගීත රටාව තෝරන්න",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(StorySoundscape.entries) { soundscape ->
-                            FilterChip(
-                                selected = activeSoundscape == soundscape,
-                                onClick = { onSelectSoundscape(soundscape) },
-                                label = { Text(soundscape.displayNameSinhala) }
-                            )
-                        }
                     }
                 }
             }

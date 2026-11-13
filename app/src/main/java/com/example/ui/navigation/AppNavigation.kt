@@ -1,6 +1,7 @@
 package com.example.ui.navigation
 
 import android.util.Base64
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Row
@@ -12,28 +13,38 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoStories
 import androidx.compose.material.icons.filled.Bookmark
+import androidx.compose.material.icons.filled.EmojiEvents
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Public
 import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.BookmarkBorder
+import androidx.compose.material.icons.outlined.EmojiEvents
 import androidx.compose.material.icons.outlined.Explore
 import androidx.compose.material.icons.outlined.Public
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import androidx.credentials.CredentialManager
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -41,6 +52,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.example.data.model.SciFiSubGenre
+import com.example.ui.auth.attemptSilentGoogleSignIn
+import com.example.ui.components.AuthorSideDrawerContent
+import kotlinx.coroutines.launch
 import com.example.ui.screens.ArticleDetailScreen
 import com.example.ui.screens.BlogUniverseScreen
 import com.example.ui.screens.CategoryPostsScreen
@@ -48,24 +63,29 @@ import com.example.ui.screens.ExploreScreen
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.PageDetailScreen
+import com.example.ui.screens.ScoreboardScreen
 import com.example.ui.screens.WebViewerScreen
 import com.example.ui.theme.AppThemeMode
 import com.example.ui.viewmodel.BlogViewModel
+import com.example.ui.viewmodel.ScoreboardViewModel
 import java.nio.charset.StandardCharsets
 
 object AppRoutes {
     const val HOME = "home"
     const val EXPLORE = "explore"
     const val LIBRARY = "library"
+    const val SCOREBOARD = "scoreboard"
     const val UNIVERSE = "universe"
     const val ARTICLE_DETAIL = "article/{postId}"
     const val PAGE_DETAIL = "page/{pageId}"
     const val CATEGORY_POSTS = "category/{categoryName}"
+    const val SUBGENRE_POSTS = "subgenre/{subGenreName}"
     const val WEB_VIEWER = "web/{url}/{title}"
 
     fun articleRoute(postId: String): String = "article/${encodeArg(postId)}"
     fun pageRoute(pageId: String): String = "page/${encodeArg(pageId)}"
     fun categoryRoute(categoryName: String): String = "category/${encodeArg(categoryName)}"
+    fun subGenreRoute(subGenre: SciFiSubGenre): String = "subgenre/${subGenre.name}"
     fun webRoute(url: String, title: String): String = "web/${encodeArg(url)}/${encodeArg(title)}"
 
     fun encodeArg(value: String): String {
@@ -112,8 +132,15 @@ private val TopLevelTabs = listOf(
         testTag = "nav_tab_library"
     ),
     BottomNavTab(
+        route = AppRoutes.SCOREBOARD,
+        label = "ලකුණු",
+        selectedIcon = Icons.Filled.EmojiEvents,
+        unselectedIcon = Icons.Outlined.EmojiEvents,
+        testTag = "nav_tab_scoreboard"
+    ),
+    BottomNavTab(
         route = AppRoutes.UNIVERSE,
-        label = "බ්ලොග් අඩවිය",
+        label = "බ්ලොග්",
         selectedIcon = Icons.Filled.Public,
         unselectedIcon = Icons.Outlined.Public,
         testTag = "nav_tab_universe"
@@ -126,6 +153,20 @@ fun CeyloneseFuturismApp(viewModel: BlogViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val postCommentsMap by viewModel.postComments.collectAsStateWithLifecycle()
     val loadingCommentsPostId by viewModel.loadingCommentsForPost.collectAsStateWithLifecycle()
+    val scoreboardViewModel: ScoreboardViewModel = viewModel(factory = ScoreboardViewModel.provideFactory())
+    val scoreboardUiState by scoreboardViewModel.uiState.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val credentialManager = remember(context) { CredentialManager.create(context) }
+
+    LaunchedEffect(Unit) {
+        attemptSilentGoogleSignIn(
+            context = context,
+            credentialManager = credentialManager,
+            scope = this,
+            onAuthSuccess = { scoreboardViewModel.onUserAuthenticated() },
+            onUnauthenticated = {}
+        )
+    }
 
     val backStackEntry by navController.currentBackStackEntryAsState()
     val currentRoute = backStackEntry?.destination?.route
@@ -141,8 +182,32 @@ fun CeyloneseFuturismApp(viewModel: BlogViewModel) {
         }
     }
 
-    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val useNavigationRail = maxWidth >= 600.dp
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val drawerScope = rememberCoroutineScope()
+
+    BackHandler(enabled = drawerState.isOpen) {
+        drawerScope.launch { drawerState.close() }
+    }
+
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        gesturesEnabled = isTopLevelDestination,
+        drawerContent = {
+            AuthorSideDrawerContent(
+                blogMeta = uiState.blogMeta,
+                currentRoute = currentRoute,
+                onNavigateToTab = navigateToTab,
+                onOpenInAppWeb = { url, title ->
+                    navController.navigate(AppRoutes.webRoute(url, title))
+                },
+                onCloseDrawer = {
+                    drawerScope.launch { drawerState.close() }
+                }
+            )
+        }
+    ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+            val useNavigationRail = maxWidth >= 600.dp
 
         Scaffold(
             contentWindowInsets = WindowInsets.safeDrawing,
@@ -206,9 +271,13 @@ fun CeyloneseFuturismApp(viewModel: BlogViewModel) {
                         composable(AppRoutes.HOME) {
                             HomeScreen(
                                 uiState = uiState,
+                                onOpenDrawer = {
+                                    drawerScope.launch { drawerState.open() }
+                                },
                                 onRefresh = { viewModel.refreshBlog(isUserInitiated = true) },
                                 onDismissStatus = { viewModel.dismissStatusBanner() },
                                 onSearchQueryChange = { viewModel.setSearchQuery(it) },
+                                onSelectSubGenre = { viewModel.setSelectedSubGenre(it) },
                                 onSelectCategory = { viewModel.setSelectedCategory(it) },
                                 onToggleTheme = {
                                     val next = if (uiState.readerPreferences.appThemeMode == AppThemeMode.LIGHT) {
@@ -230,6 +299,9 @@ fun CeyloneseFuturismApp(viewModel: BlogViewModel) {
                         composable(AppRoutes.EXPLORE) {
                             ExploreScreen(
                                 uiState = uiState,
+                                onSubGenreClick = { subGenre ->
+                                    navController.navigate(AppRoutes.subGenreRoute(subGenre))
+                                },
                                 onCategoryClick = { category ->
                                     navController.navigate(AppRoutes.categoryRoute(category))
                                 },
@@ -252,6 +324,23 @@ fun CeyloneseFuturismApp(viewModel: BlogViewModel) {
                                     viewModel.toggleBookmark(post)
                                 },
                                 onBrowseStoriesClick = { navigateToTab(AppRoutes.HOME) }
+                            )
+                        }
+
+                        composable(AppRoutes.SCOREBOARD) {
+                            ScoreboardScreen(
+                                uiState = scoreboardUiState,
+                                onSaveDisplayName = { scoreboardViewModel.saveDisplayName(it) },
+                                onAuthSuccess = { scoreboardViewModel.onUserAuthenticated() },
+                                onSyncNow = { scoreboardViewModel.syncAllScoresToCloud() },
+                                onAuthMessage = { scoreboardViewModel.showStatusMessage(it) },
+                                onClearStatusMessage = { scoreboardViewModel.clearStatusMessage() },
+                                onOpenPost = { post ->
+                                    navController.navigate(AppRoutes.articleRoute(post.id))
+                                },
+                                onOpenPostById = { postId ->
+                                    navController.navigate(AppRoutes.articleRoute(postId))
+                                }
                             )
                         }
 
@@ -284,6 +373,7 @@ fun CeyloneseFuturismApp(viewModel: BlogViewModel) {
 
                             ArticleDetailScreen(
                                 post = post,
+                                blogMeta = uiState.blogMeta,
                                 allPosts = uiState.allPosts,
                                 comments = comments,
                                 isLoadingComments = isLoadingComments,
@@ -298,6 +388,9 @@ fun CeyloneseFuturismApp(viewModel: BlogViewModel) {
                                         popUpTo(AppRoutes.ARTICLE_DETAIL) { inclusive = true }
                                     }
                                 },
+                                onSubGenreClick = { subGenre ->
+                                    navController.navigate(AppRoutes.subGenreRoute(subGenre))
+                                },
                                 onCategoryClick = { category ->
                                     navController.navigate(AppRoutes.categoryRoute(category))
                                 },
@@ -310,10 +403,16 @@ fun CeyloneseFuturismApp(viewModel: BlogViewModel) {
                                 onReaderSurfaceChange = { viewModel.setReaderSurfaceMode(it) },
                                 onAmbientMusicEnabledChange = { viewModel.setAmbientMusicEnabled(it) },
                                 onAmbientMusicVolumeChange = { viewModel.setAmbientMusicVolume(it) },
-                                onStartAmbientMusic = { soundscape, volume ->
-                                    viewModel.startStoryAmbientMusic(soundscape, volume)
+                                onSelectTrackSlot = { postIdArg, slotIdx ->
+                                    viewModel.setStoryTrackSlot(postIdArg, slotIdx)
                                 },
-                                onStopAmbientMusic = { viewModel.stopStoryAmbientMusic() }
+                                onStartStoryMusic = { track, volume ->
+                                    viewModel.startStoryMusic(track, volume)
+                                },
+                                onStopStoryMusic = { viewModel.stopStoryAmbientMusic() },
+                                onNavigateToScoreboard = {
+                                    navigateToTab(AppRoutes.SCOREBOARD)
+                                }
                             )
                         }
 
@@ -354,6 +453,26 @@ fun CeyloneseFuturismApp(viewModel: BlogViewModel) {
                         }
 
                         composable(
+                            route = AppRoutes.SUBGENRE_POSTS,
+                            arguments = listOf(navArgument("subGenreName") { type = NavType.StringType })
+                        ) { entry ->
+                            val rawName = entry.arguments?.getString("subGenreName").orEmpty()
+                            val subGenre = remember(rawName) {
+                                runCatching { SciFiSubGenre.valueOf(rawName) }.getOrNull()
+                            }
+                            CategoryPostsScreen(
+                                categoryName = subGenre?.titleSinhala ?: rawName,
+                                subGenre = subGenre,
+                                allPosts = uiState.allPosts,
+                                onBack = { navController.popBackStack() },
+                                onPostClick = { post ->
+                                    navController.navigate(AppRoutes.articleRoute(post.id))
+                                },
+                                onToggleBookmark = { viewModel.toggleBookmark(it) }
+                            )
+                        }
+
+                        composable(
                             route = AppRoutes.WEB_VIEWER,
                             arguments = listOf(
                                 navArgument("url") { type = NavType.StringType },
@@ -375,6 +494,7 @@ fun CeyloneseFuturismApp(viewModel: BlogViewModel) {
                     }
                 }
             }
+        }
         }
     }
 }

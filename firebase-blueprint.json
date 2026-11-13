@@ -1,0 +1,124 @@
+{
+  "entities": {
+    "LeaderboardEntry": {
+      "title": "Leaderboard Entry",
+      "description": "Public reader score summary for the Ceylonese Futurism leaderboard without PII.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the reader."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Reader chosen display name shown on the leaderboard."
+        },
+        "totalScore": {
+          "type": "integer",
+          "description": "Cumulative quiz points earned across all completed stories."
+        },
+        "storiesCompleted": {
+          "type": "integer",
+          "description": "Count of unique stories whose quizzes have been completed."
+        },
+        "lastStoryTitle": {
+          "type": "string",
+          "description": "Title of the most recently completed story quiz."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp updated via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "totalScore",
+        "storiesCompleted",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "StoryScore": {
+      "title": "Story Score",
+      "description": "Per-story quiz result owned by an individual authenticated reader.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "Firebase Auth UID of the owner."
+        },
+        "storyId": {
+          "type": "string",
+          "description": "URL/Firestore-safe story document identifier."
+        },
+        "postId": {
+          "type": "string",
+          "description": "Original Blogger post identifier."
+        },
+        "postTitle": {
+          "type": "string",
+          "description": "Sinhala title of the story."
+        },
+        "score": {
+          "type": "integer",
+          "description": "Points earned on this story quiz."
+        },
+        "maxScore": {
+          "type": "integer",
+          "description": "Maximum possible points for this story quiz."
+        },
+        "correctAnswers": {
+          "type": "integer",
+          "description": "Number of questions answered correctly."
+        },
+        "totalQuestions": {
+          "type": "integer",
+          "description": "Total number of quiz questions."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp set via FieldValue.serverTimestamp()."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp updated via FieldValue.serverTimestamp()."
+        }
+      },
+      "required": [
+        "userId",
+        "storyId",
+        "postId",
+        "postTitle",
+        "score",
+        "maxScore",
+        "correctAnswers",
+        "totalQuestions",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/leaderboard/{userId}": {
+      "schema": {
+        "$ref": "#/entities/LeaderboardEntry"
+      },
+      "description": "Publicly readable (signed-in) leaderboard ranked by totalScore; owner-writable only."
+    },
+    "/users/{userId}/story_scores/{storyId}": {
+      "schema": {
+        "$ref": "#/entities/StoryScore"
+      },
+      "description": "Private per-story quiz score records scoped strictly to each authenticated reader."
+    }
+  }
+}

@@ -7,6 +7,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.firebase.configureAppCheck
 import com.example.ui.navigation.CeyloneseFuturismApp
 import com.example.ui.theme.CeyloneseFuturismTheme
 import com.example.ui.viewmodel.BlogViewModel
@@ -14,6 +15,7 @@ import com.example.ui.viewmodel.BlogViewModel
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        configureAppCheck(this, intent)
         enableEdgeToEdge()
         setContent {
             val blogViewModel: BlogViewModel = viewModel()

@@ -52,5 +52,21 @@ data class BlogMetaEntity(
     val blogUrl: String,
     val navLinksDelimited: String,
     val lastSyncedMillis: Long,
-    val totalPostsCount: Int
+    val totalPostsCount: Int,
+    val adsensePublisherId: String = "",
+    val adsenseSlotIdsDelimited: String = ""
 )
+
+@Entity(tableName = "story_scores")
+data class StoryScoreEntity(
+    @PrimaryKey val postId: String,
+    val storyId: String,
+    val postTitle: String,
+    val score: Int,
+    val maxScore: Int,
+    val correctAnswers: Int,
+    val totalQuestions: Int,
+    val earnedAtMillis: Long,
+    val syncedToCloud: Boolean = false
+)
+

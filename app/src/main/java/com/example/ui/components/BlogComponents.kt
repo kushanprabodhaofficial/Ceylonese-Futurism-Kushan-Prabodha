@@ -38,6 +38,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -55,6 +56,8 @@ import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
 import com.example.R
 import com.example.data.local.BlogPostEntity
+import com.example.data.model.SciFiSubGenre
+import com.example.data.model.SubGenreClassifier
 import com.example.data.remote.BloggerJsonParser
 import com.example.ui.theme.NotoSerifSinhalaFamily
 import com.example.ui.theme.SpaceGroteskFamily
@@ -327,10 +330,14 @@ fun StoryListCard(
     onClick: () -> Unit,
     onBookmarkClick: () -> Unit,
     onLabelClick: ((String) -> Unit)? = null,
+    onSubGenreClick: ((SciFiSubGenre) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val dateLabel = BloggerJsonParser.formatSinhalaDate(post.publishedMillis, post.publishedIso)
-    val labels = post.labelsList().take(3)
+    val labels = post.labelsList().take(2)
+    val primarySubGenre = remember(post.id, post.title, post.labelsDelimited) {
+        SubGenreClassifier.classifyPost(post).firstOrNull()
+    }
 
     Card(
         modifier = modifier
@@ -350,12 +357,28 @@ fun StoryListCard(
                 verticalAlignment = Alignment.Top
             ) {
                 Column(modifier = Modifier.weight(1f)) {
-                    if (labels.isNotEmpty()) {
+                    if (primarySubGenre != null || labels.isNotEmpty()) {
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                             modifier = Modifier.padding(bottom = 6.dp)
                         ) {
+                            if (primarySubGenre != null) {
+                                Surface(
+                                    shape = RoundedCornerShape(6.dp),
+                                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.85f),
+                                    modifier = if (onSubGenreClick != null) {
+                                        Modifier.clickable { onSubGenreClick(primarySubGenre) }
+                                    } else Modifier
+                                ) {
+                                    Text(
+                                        text = primarySubGenre.titleSinhala,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
                             labels.forEach { label ->
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),

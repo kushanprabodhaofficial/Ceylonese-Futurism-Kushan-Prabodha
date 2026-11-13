@@ -22,8 +22,12 @@ data class ReaderPreferences(
     val readerSurfaceMode: ReaderSurfaceMode = ReaderSurfaceMode.FOLLOW_APP,
     val appThemeMode: AppThemeMode = AppThemeMode.DARK,
     val ambientMusicEnabled: Boolean = true,
-    val ambientMusicVolume: Float = 0.55f
-)
+    val ambientMusicVolume: Float = 0.55f,
+    val storyTrackSlots: Map<String, Int> = emptyMap(),
+    val readerDisplayName: String = ""
+) {
+    fun selectedTrackSlotFor(postId: String): Int = storyTrackSlots[postId] ?: 0
+}
 
 class ReaderPreferencesRepository(private val context: Context) {
 
@@ -35,11 +39,14 @@ class ReaderPreferencesRepository(private val context: Context) {
         val APP_THEME_MODE = stringPreferencesKey("app_theme_mode")
         val AMBIENT_MUSIC_ENABLED = booleanPreferencesKey("ambient_music_enabled")
         val AMBIENT_MUSIC_VOLUME = floatPreferencesKey("ambient_music_volume")
+        val STORY_TRACK_SLOTS = stringPreferencesKey("story_track_slots")
+        val READER_DISPLAY_NAME = stringPreferencesKey("reader_display_name")
     }
 
     val preferencesFlow: Flow<ReaderPreferences> = context.readerDataStore.data.map { prefs ->
         val surfaceName = prefs[Keys.READER_SURFACE] ?: ReaderSurfaceMode.FOLLOW_APP.name
         val themeName = prefs[Keys.APP_THEME_MODE] ?: AppThemeMode.DARK.name
+        val slotsMap = decodeSlotsMap(prefs[Keys.STORY_TRACK_SLOTS].orEmpty())
         ReaderPreferences(
             fontSizeSp = (prefs[Keys.FONT_SIZE_SP] ?: 18f).coerceIn(14f, 26f),
             lineHeightMultiplier = (prefs[Keys.LINE_HEIGHT_MULTIPLIER] ?: 1.65f).coerceIn(1.35f, 2.0f),
@@ -49,7 +56,9 @@ class ReaderPreferencesRepository(private val context: Context) {
             appThemeMode = runCatching { AppThemeMode.valueOf(themeName) }
                 .getOrDefault(AppThemeMode.DARK),
             ambientMusicEnabled = prefs[Keys.AMBIENT_MUSIC_ENABLED] ?: true,
-            ambientMusicVolume = (prefs[Keys.AMBIENT_MUSIC_VOLUME] ?: 0.55f).coerceIn(0.05f, 1f)
+            ambientMusicVolume = (prefs[Keys.AMBIENT_MUSIC_VOLUME] ?: 0.55f).coerceIn(0.05f, 1f),
+            storyTrackSlots = slotsMap,
+            readerDisplayName = prefs[Keys.READER_DISPLAY_NAME].orEmpty().take(40)
         )
     }
 
@@ -93,5 +102,37 @@ class ReaderPreferencesRepository(private val context: Context) {
         context.readerDataStore.edit { prefs ->
             prefs[Keys.AMBIENT_MUSIC_VOLUME] = volume.coerceIn(0.05f, 1f)
         }
+    }
+
+    suspend fun setStoryTrackSlot(postId: String, slotIndex: Int) {
+        val clamped = slotIndex.coerceIn(0, 1)
+        context.readerDataStore.edit { prefs ->
+            val current = decodeSlotsMap(prefs[Keys.STORY_TRACK_SLOTS].orEmpty()).toMutableMap()
+            current[postId] = clamped
+            prefs[Keys.STORY_TRACK_SLOTS] = encodeSlotsMap(current)
+        }
+    }
+
+    suspend fun setReaderDisplayName(name: String) {
+        val cleaned = name.trim().take(40)
+        context.readerDataStore.edit { prefs ->
+            prefs[Keys.READER_DISPLAY_NAME] = cleaned
+        }
+    }
+
+    private fun decodeSlotsMap(raw: String): Map<String, Int> {
+        if (raw.isBlank()) return emptyMap()
+        return raw.split("|||").mapNotNull { entry ->
+            val parts = entry.split("==")
+            if (parts.size == 2) {
+                val id = parts[0]
+                val slot = parts[1].toIntOrNull()?.coerceIn(0, 1) ?: return@mapNotNull null
+                id to slot
+            } else null
+        }.toMap()
+    }
+
+    private fun encodeSlotsMap(map: Map<String, Int>): String {
+        return map.entries.joinToString("|||") { "${it.key}==${it.value}" }
     }
 }
