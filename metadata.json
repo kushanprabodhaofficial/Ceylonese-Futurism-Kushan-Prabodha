@@ -1,0 +1,6 @@
+{
+  "name": "Ceylonese Futurism",
+  "description": "Sinhala science fiction and speculative stories reader for kushanprabodha.blogspot.com with live blog refresh, organized categories, pages, and offline reading.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,22 @@
+<resources>
+    <string name="app_name">Ceylonese Futurism</string>
+    <string name="blog_subtitle">සිංහල විද්‍යා ප්‍රබන්ධ සහ අනාගතවාදී ලේඛන</string>
+    <string name="nav_stories">ලිපි</string>
+    <string name="nav_explore">වර්ග</string>
+    <string name="nav_library">සුරැකි</string>
+    <string name="nav_universe">බ්ලොග් අඩවිය</string>
+    <string name="action_refresh">යාවත්කාලීන කරන්න</string>
+    <string name="action_search_hint">විද්‍යා ප්‍රබන්ධ සොයන්න...</string>
+    <string name="action_bookmark">සුරකින්න</string>
+    <string name="action_bookmarked">සුරැකිණි</string>
+    <string name="action_share">බෙදාගන්න</string>
+    <string name="action_open_web">වෙබ් පිටුවෙන් බලන්න</string>
+    <string name="action_read_story">කියවන්න</string>
+    <string name="action_back">ආපසු</string>
+    <string name="cd_refresh_blog">බ්ලොග් අඩවිය යාවත්කාලීන කරන්න</string>
+    <string name="cd_reader_settings">කියවීමේ සැකසුම්</string>
+    <string name="cd_toggle_bookmark">සුරැකුම මාරු කරන්න</string>
+    <string name="cd_share_article">ලිපිය බෙදාගන්න</string>
+    <string name="cd_open_in_web">වෙබ් අඩවියෙන් විවෘත කරන්න</string>
+    <string name="cd_clear_search">සෙවුම මකන්න</string>
+</resources>
